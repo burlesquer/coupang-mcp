@@ -5,6 +5,7 @@ import { z } from "zod";
 import {
   searchProducts,
   getProductDetail,
+  getProductSpec,
   getProductReviews,
   checkInventory,
   getBest100,
@@ -124,6 +125,68 @@ server.tool(
       return {
         content: [
           { type: "text" as const, text: `가격 조회 오류: ${error instanceof Error ? error.message : String(error)}` },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ── Tool 7: 상품 상세 스펙 ─────────────────────────────
+server.tool(
+  "coupang_get_product_detail",
+  "쿠팡 상품의 상세 스펙/사양 정보를 조회합니다. 모델명, 제조사, 제조국, 인증정보, 출시일 등 상품 속성을 확인할 수 있습니다.",
+  {
+    productId: z.string().describe("쿠팡 상품 ID"),
+  },
+  async ({ productId }) => {
+    try {
+      const spec = await getProductSpec(productId);
+
+      if (!spec) {
+        return {
+          content: [
+            { type: "text" as const, text: `상품 ID ${productId}를 찾을 수 없습니다.` },
+          ],
+          isError: true,
+        };
+      }
+
+      let text = `## ${spec.name}\n\n`;
+
+      // 기본 정보
+      text += `### 기본 정보\n`;
+      text += `| 항목 | 내용 |\n|------|------|\n`;
+      text += `| 판매가 | **${spec.price.toLocaleString()}원** |\n`;
+      if (spec.originalPrice) text += `| 원가 | ${spec.originalPrice.toLocaleString()}원 |\n`;
+      if (spec.discount) text += `| 할인율 | ${spec.discount} |\n`;
+      if (spec.rating) text += `| 평점 | ${spec.rating.toFixed(1)}점 |\n`;
+      if (spec.reviewCount) text += `| 리뷰 수 | ${spec.reviewCount.toLocaleString()}개 |\n`;
+      text += `| 재고 | ${spec.inStock ? "✅ 재고 있음" : "❌ 품절"} |\n`;
+      text += `| 로켓배송 | ${spec.isRocket ? "🚀 가능" : "일반배송"} |\n`;
+      if (spec.seller) text += `| 판매자 | ${spec.seller} |\n`;
+      if (spec.deliveryInfo) text += `| 배송 | ${spec.deliveryInfo} |\n`;
+
+      // 스펙 테이블
+      const specEntries = Object.entries(spec.specs);
+      if (specEntries.length > 0) {
+        text += `\n### 상품 스펙\n`;
+        text += `| 항목 | 내용 |\n|------|------|\n`;
+        specEntries.forEach(([key, val]) => {
+          text += `| ${key} | ${val} |\n`;
+        });
+      }
+
+      // 상품 설명
+      if (spec.description) {
+        text += `\n### 상품 설명\n${spec.description}\n`;
+      }
+
+      return { content: [{ type: "text" as const, text }] };
+    } catch (error) {
+      return {
+        content: [
+          { type: "text" as const, text: `상세 정보 조회 오류: ${error instanceof Error ? error.message : String(error)}` },
         ],
         isError: true,
       };

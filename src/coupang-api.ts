@@ -345,6 +345,172 @@ export async function getProductReviews(
   }).catch(() => []);
 }
 
+// ── 상품 상세 스펙 ──────────────────────────────────
+export interface ProductSpec {
+  id: string;
+  name: string;
+  price: number;
+  originalPrice?: number;
+  discount?: string;
+  rating?: number;
+  reviewCount?: number;
+  isRocket: boolean;
+  inStock: boolean;
+  seller?: string;
+  deliveryInfo?: string;
+  specs: Record<string, string>;
+  description?: string;
+}
+
+export async function getProductSpec(productId: string): Promise<ProductSpec | null> {
+  return withPage(async (page) => {
+    const url = `${COUPANG_BASE}/vp/products/${productId}`;
+    await page.goto(url, { waitUntil: "load", timeout: 20000 });
+    await page.waitForTimeout(3000);
+
+    // 스펙 섹션까지 스크롤
+    await page.evaluate(() => window.scrollTo(0, document.body.scrollHeight * 0.5));
+    await page.waitForTimeout(1500);
+
+    const detail = await page.evaluate((pid: string) => {
+      const body = document.body;
+      if (!body) return null;
+
+      // 상품명
+      const nameEl = body.querySelector(
+        "h1.prod-buy-header__title, .prod-buy-header__title, h1[class*=title], h2.prod-buy-header__title"
+      );
+      const name = nameEl?.textContent?.trim() || "";
+      if (!name) return null;
+
+      // 가격
+      const finalPriceEl = body.querySelector(".final-price-amount, .sales-price-amount, .total-price strong");
+      let priceText = finalPriceEl?.textContent?.trim().replace(/[,원\s]/g, "") || "";
+      if (!priceText || priceText === "0") {
+        const pc = body.querySelector(".price-container");
+        const allPrices = pc?.textContent?.match(/([\d,]+)원/g) || [];
+        if (allPrices.length > 0) priceText = allPrices[allPrices.length - 1].replace(/[,원]/g, "");
+      }
+
+      // 원가
+      const origEl = body.querySelector(".original-price-amount, .origin-price");
+      const origText = origEl?.textContent?.trim().replace(/[,원\s]/g, "") || "";
+
+      // 할인율
+      const pc = body.querySelector(".price-container");
+      const discMatch = pc?.textContent?.match(/(\d+)\s*%/);
+      const discountText = discMatch ? discMatch[1] + "%" : "";
+
+      // 평점
+      const ratingStyle = body.querySelector("[class*=rating-star-num], .star-rating [style]")?.getAttribute("style") || "";
+      const ratingMatch = ratingStyle.match(/width:\s*([\d.]+)%/);
+
+      // 리뷰수
+      const fullText = body.textContent || "";
+      const reviewMatch = fullText.match(/\(([\d,]+)개의 상품평\)/) || fullText.match(/상품평\s*\(([\d,]+)\)/);
+      const reviewCountText = reviewMatch ? reviewMatch[1].replace(/,/g, "") : "";
+
+      // 로켓배송
+      const isRocket = fullText.includes("로켓배송") || !!body.querySelector("img[alt*=로켓]");
+
+      // 재고
+      const oosEl = body.querySelector(".oos-label, .out-of-stock, [class*=not-find], [class*=soldout]");
+      const inStock = !oosEl;
+
+      // 판매자
+      const sellerEl = body.querySelector("[class*=vendor-name], .prod-sale-vendor-name, a[href*=vender]");
+      const seller = sellerEl?.textContent?.trim() || "";
+
+      // 배송
+      const deliveryEl = body.querySelector("[class*=delivery], .prod-txt-onyx");
+      const deliveryInfo = deliveryEl?.textContent?.trim().substring(0, 100) || "";
+
+      // ── 스펙 테이블 파싱 ──
+      const specs: Record<string, string> = {};
+
+      // 필터: 배송/반품/교환 관련 키워드 제외
+      const excludeKeywords = [
+        "배송", "반품", "교환", "환불", "의류", "잡화", "수입명품",
+        "계절상품", "식품", "화장품", "전자/가전", "설치상품",
+        "자동차용품", "CD/DVD", "GAME", "BOOK", "판매자",
+        "묶음배송", "A/S", "고객센터",
+      ];
+      const shouldExclude = (key: string, val: string) =>
+        excludeKeywords.some((kw) => key.includes(kw) || val.length > 150);
+
+      // 방법1: 첫 번째 테이블 (상품 정보 테이블)
+      const tables = body.querySelectorAll("table");
+      if (tables.length > 0) {
+        const specTable = tables[0]; // 첫 번째 테이블이 스펙
+        const rows = specTable.querySelectorAll("tr");
+        rows.forEach((row) => {
+          const cells = row.querySelectorAll("th, td");
+          for (let i = 0; i < cells.length - 1; i += 2) {
+            const key = cells[i]?.textContent?.trim();
+            const val = cells[i + 1]?.textContent?.trim();
+            if (key && val && key.length < 30 && !shouldExclude(key, val)) {
+              specs[key] = val.substring(0, 200);
+            }
+          }
+        });
+      }
+
+      // 방법2: dt/dd 쌍
+      const dts = body.querySelectorAll("dt");
+      dts.forEach((dt) => {
+        const key = dt.textContent?.trim() || "";
+        const dd = dt.nextElementSibling;
+        const val = dd?.textContent?.trim() || "";
+        if (key && val && key.length < 30) {
+          specs[key] = val.substring(0, 200);
+        }
+      });
+
+      // 방법3: prod-attr-item
+      body.querySelectorAll(".prod-attr-item, [class*=attr-item]").forEach((el) => {
+        const key = el.querySelector("dt, [class*=title]")?.textContent?.trim() || "";
+        const val = el.querySelector("dd, [class*=desc]")?.textContent?.trim() || "";
+        if (key && val) specs[key] = val.substring(0, 200);
+      });
+
+      // ── 상품 설명 (간략) ──
+      const descEl = body.querySelector(
+        ".product-detail-content-inside, [class*=productDetail], .detail-item"
+      );
+      const description = descEl?.textContent?.trim().substring(0, 500) || "";
+
+      return {
+        id: pid,
+        name,
+        price: parseInt(priceText) || 0,
+        originalPrice: origText ? parseInt(origText) || null : null,
+        discount: discountText || null,
+        rating: ratingMatch ? Math.round((parseFloat(ratingMatch[1]) / 20) * 10) / 10 : null,
+        reviewCount: reviewCountText ? parseInt(reviewCountText) : null,
+        isRocket,
+        inStock,
+        seller: seller || null,
+        deliveryInfo: deliveryInfo || null,
+        specs,
+        description: description || null,
+      };
+    }, productId);
+
+    if (!detail) return null;
+
+    return {
+      ...detail,
+      originalPrice: detail.originalPrice ?? undefined,
+      discount: detail.discount ?? undefined,
+      rating: detail.rating ?? undefined,
+      reviewCount: detail.reviewCount ?? undefined,
+      seller: detail.seller ?? undefined,
+      deliveryInfo: detail.deliveryInfo ?? undefined,
+      description: detail.description ?? undefined,
+    };
+  }).catch(() => null);
+}
+
 // ── 베스트 100 ──────────────────────────────────────
 export interface BestProduct {
   rank: number;
