@@ -195,19 +195,26 @@ export async function getProductDetail(
       const name = nameEl?.textContent?.trim() || "";
       if (!name) return null;
 
-      // 가격
-      const priceEl = body.querySelector(
-        ".total-price strong, [class*=total-price], .prod-sale-price strong"
-      );
-      const priceText = priceEl?.textContent?.trim().replace(/[,원\s]/g, "") || "0";
+      // 가격 (final-price-amount > sales-price-amount > total-price)
+      const finalPriceEl = body.querySelector(".final-price-amount, .sales-price-amount, .total-price strong, [class*=total-price]");
+      let priceText = finalPriceEl?.textContent?.trim().replace(/[,원\s]/g, "") || "";
+      // fallback: price-container에서 마지막 가격 추출
+      if (!priceText || priceText === "0") {
+        const priceContainer = body.querySelector(".price-container, [class*=price-container]");
+        const allPrices = priceContainer?.textContent?.match(/([\d,]+)원/g) || [];
+        if (allPrices.length > 0) {
+          priceText = allPrices[allPrices.length - 1].replace(/[,원]/g, "");
+        }
+      }
 
-      // 원가
-      const origEl = body.querySelector(".origin-price, .base-price, del");
+      // 원가 (original-price-amount > origin-price)
+      const origEl = body.querySelector(".original-price-amount, .origin-price, .base-price");
       const origText = origEl?.textContent?.trim().replace(/[,원\s]/g, "") || "";
 
       // 할인율
-      const discountEl = body.querySelector(".discount-rate, [class*=discount-rate]");
-      const discountText = discountEl?.textContent?.trim() || "";
+      const priceContainer = body.querySelector(".price-container, [class*=price-container]");
+      const discountMatch = priceContainer?.textContent?.match(/(\d+)\s*%/);
+      const discountText = discountMatch ? discountMatch[1] + "%" : "";
 
       // 평점
       const ratingStyle = body.querySelector("[class*=rating-star-num], .star-rating [style]")?.getAttribute("style") || "";
