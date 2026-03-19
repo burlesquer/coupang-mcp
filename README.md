@@ -63,7 +63,30 @@ google-chrome --remote-debugging-port=9222 --user-data-dir="/tmp/ChromeTEMP"
 
 ### Claude Code
 
-프로젝트 디렉토리의 `.mcp.json` 또는 글로벌 설정:
+**글로벌 등록 (모든 프로젝트에서 사용):**
+
+```bash
+claude mcp add coupang node /path/to/coupang-mcp/dist/index.js
+```
+
+**프로젝트 스코프 (현재 프로젝트에서만 사용):**
+
+프로젝트 루트에 `.mcp.json` 생성:
+
+```json
+{
+  "mcpServers": {
+    "coupang": {
+      "command": "node",
+      "args": ["/path/to/coupang-mcp/dist/index.js"]
+    }
+  }
+}
+```
+
+### Claude Desktop
+
+`Settings → Developer → Edit Config`에서 `claude_desktop_config.json` 편집:
 
 ```json
 {
@@ -90,6 +113,10 @@ Settings → MCP Servers에 추가:
   }
 }
 ```
+
+### 기타 MCP 지원 클라이언트
+
+VS Code (Copilot), Windsurf, ChatGPT Desktop, Cline 등 MCP를 지원하는 모든 클라이언트에서 동일한 설정 형식으로 사용할 수 있습니다.
 
 ### 환경 변수 (선택)
 
