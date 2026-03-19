@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "coupang": {
+      "command": "node",
+      "args": ["C:\\Users\\deekee\\project\\coupang-mcp\\dist\\index.js"]
+    }
+  }
+}

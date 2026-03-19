@@ -1,0 +1,32 @@
+{
+  "name": "coupang-mcp",
+  "version": "1.0.0",
+  "description": "쿠팡 상품 검색, 가격 조회, 재고 확인, 리뷰 조회 MCP 서버",
+  "main": "dist/index.js",
+  "type": "module",
+  "bin": {
+    "coupang-mcp": "dist/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "coupang"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "axios": "^1.13.6",
+    "playwright": "^1.58.2",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
