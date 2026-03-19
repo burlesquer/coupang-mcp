@@ -62,13 +62,34 @@ export interface Review {
 }
 
 // ── 상품 검색 ───────────────────────────────────────
+export interface SearchOptions {
+  query: string;
+  limit?: number;
+  sortBy?: string;
+  minPrice?: number;
+  maxPrice?: number;
+  rocketOnly?: boolean;
+  page?: number;
+}
+
 export async function searchProducts(
-  query: string,
+  queryOrOpts: string | SearchOptions,
   limit: number = 10,
   sortBy: string = "scoreDesc"
 ): Promise<CoupangProduct[]> {
+  const opts: SearchOptions = typeof queryOrOpts === "string"
+    ? { query: queryOrOpts, limit, sortBy }
+    : queryOrOpts;
+
   return withPage(async (page) => {
-    const url = `${COUPANG_BASE}/np/search?q=${encodeURIComponent(query)}&sorter=${sortBy}`;
+    const params = new URLSearchParams();
+    params.set("q", opts.query);
+    params.set("sorter", opts.sortBy || "scoreDesc");
+    if (opts.minPrice) params.set("minPrice", String(opts.minPrice));
+    if (opts.maxPrice) params.set("maxPrice", String(opts.maxPrice));
+    if (opts.rocketOnly) params.set("rocketAll", "true");
+    if (opts.page && opts.page > 1) params.set("page", String(opts.page));
+    const url = `${COUPANG_BASE}/np/search?${params.toString()}`;
     await page.goto(url, { waitUntil: "load", timeout: 20000 });
     await page.waitForTimeout(3000);
 
@@ -141,7 +162,7 @@ export async function searchProducts(
       });
 
       return results;
-    }, limit);
+    }, opts.limit || 10);
 
     return products.map((p: any) => ({
       ...p,
@@ -315,6 +336,157 @@ export async function getProductReviews(
       title: r.title ?? undefined,
     }));
   }).catch(() => []);
+}
+
+// ── 베스트 100 ──────────────────────────────────────
+export interface BestProduct {
+  rank: number;
+  id: string;
+  name: string;
+  price: number;
+  originalPrice?: number;
+  discount?: string;
+  reviewCount?: number;
+  imageUrl?: string;
+  url: string;
+  isRocket: boolean;
+}
+
+export async function getBest100(
+  categoryId?: string,
+  limit: number = 20
+): Promise<BestProduct[]> {
+  return withPage(async (page) => {
+    const url = categoryId
+      ? `${COUPANG_BASE}/np/best100?categoryId=${categoryId}`
+      : `${COUPANG_BASE}/np/best100`;
+    await page.goto(url, { waitUntil: "load", timeout: 20000 });
+    await page.waitForTimeout(3000);
+
+    const products = await page.evaluate((maxItems: number) => {
+      // 베스트100 페이지의 상품 리스트 파싱
+      const items = document.querySelectorAll("li[class*=productUnit], li.best-item, li[class*=best]");
+      const results: any[] = [];
+
+      // 일반 검색과 동일한 구조일 수도 있음
+      if (items.length === 0) {
+        // fallback: 모든 상품 링크 기반 파싱
+        const links = document.querySelectorAll("a[href*='/vp/products/']");
+        const seen = new Set<string>();
+
+        links.forEach((a) => {
+          if (results.length >= maxItems) return;
+          const href = a.getAttribute("href") || "";
+          const idMatch = href.match(/products\/(\d+)/);
+          if (!idMatch || seen.has(idMatch[1])) return;
+          seen.add(idMatch[1]);
+
+          const container = a.closest("li") || a.closest("div") || a;
+          const text = container.textContent || "";
+
+          // 상품명
+          const nameEl = container.querySelector("[class*=productName], [class*=name]");
+          const name = nameEl?.textContent?.trim() || text.substring(0, 80).trim();
+
+          // 가격
+          const priceMatch = text.match(/([\d,]+)원/g);
+          const prices = priceMatch?.map((p) => parseInt(p.replace(/[,원]/g, ""))) || [];
+          const price = prices.length > 1 ? prices[prices.length - 1] : prices[0] || 0;
+          const originalPrice = prices.length > 1 ? prices[0] : undefined;
+
+          // 할인율
+          const discountMatch = text.match(/(\d+)\s*%/);
+
+          // 리뷰
+          const reviewMatch = text.match(/\(([\d,]+)\)/);
+
+          // 이미지
+          const imgEl = container.querySelector("img") as HTMLImageElement;
+          const imgSrc = imgEl?.src || "";
+
+          // 로켓
+          const isRocket = text.includes("로켓") || !!container.querySelector("img[alt*=로켓]");
+
+          if (!name || !price) return;
+
+          results.push({
+            rank: results.length + 1,
+            id: idMatch[1],
+            name,
+            price,
+            originalPrice: originalPrice || null,
+            discount: discountMatch ? discountMatch[1] + "%" : null,
+            reviewCount: reviewMatch ? parseInt(reviewMatch[1].replace(/,/g, "")) : null,
+            imageUrl: imgSrc || null,
+            url: "https://www.coupang.com" + href.split("?")[0],
+            isRocket,
+          });
+        });
+
+        return results;
+      }
+
+      items.forEach((el, i) => {
+        if (i >= maxItems) return;
+        const linkEl = el.querySelector("a[href*=products]") as HTMLAnchorElement;
+        const href = linkEl?.getAttribute("href") || "";
+        const idMatch = href.match(/products\/(\d+)/);
+        if (!idMatch) return;
+
+        const nameEl = el.querySelector("[class*=productName], [class*=name]");
+        const name = nameEl?.textContent?.trim() || "";
+        const text = el.textContent || "";
+
+        const priceMatch = text.match(/([\d,]+)원/g);
+        const prices = priceMatch?.map((p) => parseInt(p.replace(/[,원]/g, ""))) || [];
+        const price = prices.length > 1 ? prices[prices.length - 1] : prices[0] || 0;
+        const originalPrice = prices.length > 1 ? prices[0] : undefined;
+
+        const discountMatch = text.match(/(\d+)\s*%/);
+        const reviewMatch = text.match(/\(([\d,]+)\)/);
+        const imgEl = el.querySelector("figure img, img") as HTMLImageElement;
+        const imgSrc = imgEl?.src || "";
+        const isRocket = text.includes("로켓") || !!el.querySelector("img[alt*=로켓]");
+
+        if (!name || !price) return;
+
+        results.push({
+          rank: i + 1,
+          id: idMatch[1],
+          name,
+          price,
+          originalPrice: originalPrice || null,
+          discount: discountMatch ? discountMatch[1] + "%" : null,
+          reviewCount: reviewMatch ? parseInt(reviewMatch[1].replace(/,/g, "")) : null,
+          imageUrl: imgSrc || null,
+          url: "https://www.coupang.com" + href.split("?")[0],
+          isRocket,
+        });
+      });
+
+      return results;
+    }, limit);
+
+    return products.map((p: any) => ({
+      ...p,
+      originalPrice: p.originalPrice ?? undefined,
+      discount: p.discount ?? undefined,
+      reviewCount: p.reviewCount ?? undefined,
+      imageUrl: p.imageUrl ?? undefined,
+    }));
+  });
+}
+
+// ── 상품 비교 ───────────────────────────────────────
+export async function compareProducts(
+  productIds: string[]
+): Promise<ProductDetail[]> {
+  const results: ProductDetail[] = [];
+  for (const id of productIds) {
+    const detail = await getProductDetail(id);
+    if (detail) results.push(detail);
+  }
+  return results;
 }
 
 // ── 재고 확인 ───────────────────────────────────────

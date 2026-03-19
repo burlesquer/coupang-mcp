@@ -7,6 +7,8 @@ import {
   getProductDetail,
   getProductReviews,
   checkInventory,
+  getBest100,
+  compareProducts,
   closeBrowser,
 } from "./coupang-api.js";
 
@@ -27,10 +29,22 @@ server.tool(
       .optional()
       .default("scoreDesc")
       .describe("정렬: scoreDesc(추천순), salePriceAsc(낮은가격순), salePriceDesc(높은가격순), saleCountDesc(판매량순)"),
+    minPrice: z.number().optional().describe("최소 가격 필터 (예: 10000)"),
+    maxPrice: z.number().optional().describe("최대 가격 필터 (예: 50000)"),
+    rocketOnly: z.boolean().optional().default(false).describe("로켓배송 상품만 필터 (true/false)"),
+    page: z.number().optional().default(1).describe("페이지 번호 (기본값: 1)"),
   },
-  async ({ keyword, limit, sortBy }) => {
+  async ({ keyword, limit, sortBy, minPrice, maxPrice, rocketOnly, page }) => {
     try {
-      const products = await searchProducts(keyword, limit, sortBy);
+      const products = await searchProducts({
+        query: keyword,
+        limit,
+        sortBy,
+        minPrice,
+        maxPrice,
+        rocketOnly,
+        page,
+      });
 
       if (products.length === 0) {
         return {
@@ -187,6 +201,169 @@ server.tool(
       return {
         content: [
           { type: "text" as const, text: `리뷰 조회 오류: ${error instanceof Error ? error.message : String(error)}` },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ── Tool 5: 베스트 100 ─────────────────────────────────
+server.tool(
+  "coupang_best100",
+  "쿠팡 베스트100 인기 랭킹 상품을 조회합니다. 카테고리별로 가장 많이 팔리는 상품 순위를 확인할 수 있습니다.",
+  {
+    categoryId: z
+      .string()
+      .optional()
+      .describe(
+        "카테고리 ID (선택). 예: '317' 패션의류, '115' 식품, '305' 가전디지털, '176' 생활용품, '137' 뷰티, '486' 스포츠, '194' 완구/취미. 미입력 시 전체 랭킹"
+      ),
+    limit: z.number().optional().default(20).describe("조회할 상품 수 (기본값: 20, 최대: 100)"),
+  },
+  async ({ categoryId, limit }) => {
+    try {
+      const products = await getBest100(categoryId, limit);
+
+      if (products.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "베스트100 상품을 조회할 수 없습니다." }],
+        };
+      }
+
+      const categoryLabel = categoryId ? ` (카테고리: ${categoryId})` : " (전체)";
+      const result = products.map((p) => {
+        let line = `**${p.rank}위.** ${p.name}\n`;
+        line += `   - 가격: ${p.price.toLocaleString()}원`;
+        if (p.originalPrice) line += ` (원가: ${p.originalPrice.toLocaleString()}원)`;
+        if (p.discount) line += ` ${p.discount}`;
+        line += "\n";
+        if (p.reviewCount) line += `   - 리뷰: ${p.reviewCount.toLocaleString()}개\n`;
+        if (p.isRocket) line += `   - 🚀 로켓배송\n`;
+        line += `   - 상품ID: ${p.id}`;
+        return line;
+      });
+
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: `## 쿠팡 베스트100${categoryLabel}\n\n${result.join("\n\n")}`,
+          },
+        ],
+      };
+    } catch (error) {
+      return {
+        content: [
+          { type: "text" as const, text: `베스트100 조회 오류: ${error instanceof Error ? error.message : String(error)}` },
+        ],
+        isError: true,
+      };
+    }
+  }
+);
+
+// ── Tool 6: 상품 비교 ──────────────────────────────────
+server.tool(
+  "coupang_compare_products",
+  "쿠팡 상품 2~5개를 비교합니다. 가격, 할인율, 평점, 리뷰 수, 로켓배송 여부, 판매자 등을 한눈에 비교할 수 있습니다.",
+  {
+    productIds: z
+      .array(z.string())
+      .min(2)
+      .max(5)
+      .describe("비교할 상품 ID 배열 (2~5개). 예: ['8367073894', '9024163013']"),
+  },
+  async ({ productIds }) => {
+    try {
+      const products = await compareProducts(productIds);
+
+      if (products.length === 0) {
+        return {
+          content: [{ type: "text" as const, text: "상품 정보를 가져올 수 없습니다. 상품 ID를 확인해주세요." }],
+          isError: true,
+        };
+      }
+
+      let text = `## 상품 비교 (${products.length}개)\n\n`;
+      text += `| 항목 |`;
+      products.forEach((_, i) => { text += ` 상품${i + 1} |`; });
+      text += "\n|------|";
+      products.forEach(() => { text += "------|"; });
+      text += "\n";
+
+      // 상품명
+      text += `| **상품명** |`;
+      products.forEach((p) => {
+        const name = p.name.length > 30 ? p.name.slice(0, 30) + "..." : p.name;
+        text += ` ${name} |`;
+      });
+      text += "\n";
+
+      // 판매가
+      text += `| **판매가** |`;
+      products.forEach((p) => { text += ` **${p.price.toLocaleString()}원** |`; });
+      text += "\n";
+
+      // 원가
+      const hasOriginal = products.some((p) => p.originalPrice);
+      if (hasOriginal) {
+        text += `| **원가** |`;
+        products.forEach((p) => { text += ` ${p.originalPrice ? p.originalPrice.toLocaleString() + "원" : "-"} |`; });
+        text += "\n";
+      }
+
+      // 할인율
+      const hasDiscount = products.some((p) => p.discount);
+      if (hasDiscount) {
+        text += `| **할인율** |`;
+        products.forEach((p) => { text += ` ${p.discount || "-"} |`; });
+        text += "\n";
+      }
+
+      // 평점
+      const hasRating = products.some((p) => p.rating);
+      if (hasRating) {
+        text += `| **평점** |`;
+        products.forEach((p) => { text += ` ${p.rating ? p.rating.toFixed(1) + "점" : "-"} |`; });
+        text += "\n";
+      }
+
+      // 리뷰수
+      const hasReviews = products.some((p) => p.reviewCount);
+      if (hasReviews) {
+        text += `| **리뷰 수** |`;
+        products.forEach((p) => { text += ` ${p.reviewCount ? p.reviewCount.toLocaleString() + "개" : "-"} |`; });
+        text += "\n";
+      }
+
+      // 재고
+      text += `| **재고** |`;
+      products.forEach((p) => { text += ` ${p.inStock ? "✅" : "❌ 품절"} |`; });
+      text += "\n";
+
+      // 로켓배송
+      text += `| **로켓배송** |`;
+      products.forEach((p) => { text += ` ${p.isRocket ? "🚀" : "-"} |`; });
+      text += "\n";
+
+      // 판매자
+      const hasSeller = products.some((p) => p.seller);
+      if (hasSeller) {
+        text += `| **판매자** |`;
+        products.forEach((p) => { text += ` ${p.seller || "-"} |`; });
+        text += "\n";
+      }
+
+      // 최저가 표시
+      const cheapest = products.reduce((a, b) => (a.price < b.price ? a : b));
+      text += `\n💰 **최저가**: ${cheapest.name} — ${cheapest.price.toLocaleString()}원`;
+
+      return { content: [{ type: "text" as const, text }] };
+    } catch (error) {
+      return {
+        content: [
+          { type: "text" as const, text: `상품 비교 오류: ${error instanceof Error ? error.message : String(error)}` },
         ],
         isError: true,
       };
